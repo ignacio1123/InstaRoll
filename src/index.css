@@ -1,0 +1,133 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --accent-color: #00d4ff;
+    --glass-opacity: 0.75;
+    --wallpaper-gradient-0: radial-gradient(ellipse at 20% 20%, rgba(0,100,180,0.18) 0%, transparent 55%), radial-gradient(ellipse at 80% 80%, rgba(100,50,200,0.12) 0%, transparent 55%), #080c14;
+    --wallpaper-gradient-1: radial-gradient(ellipse at 20% 20%, rgba(0,212,255,0.18) 0%, transparent 55%), radial-gradient(ellipse at 80% 80%, rgba(0,212,255,0.12) 0%, transparent 55%), #080c14;
+    --wallpaper-gradient-2: radial-gradient(ellipse at 20% 20%, rgba(100,50,200,0.18) 0%, transparent 55%), radial-gradient(ellipse at 80% 80%, rgba(160,32,240,0.12) 0%, transparent 55%), #080c14;
+    --wallpaper-gradient-3: radial-gradient(ellipse at 20% 20%, rgba(0,180,100,0.18) 0%, transparent 55%), radial-gradient(ellipse at 80% 80%, rgba(0,180,100,0.12) 0%, transparent 55%), #080c14;
+  }
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    background: var(--wallpaper-gradient-0);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  ::-webkit-scrollbar {
+    width: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(0, 212, 255, 0.3);
+    border-radius: 2px;
+  }
+}
+
+@layer utilities {
+  .glass {
+    background: rgba(15, 20, 30, var(--glass-opacity));
+    border: 1px solid rgba(255, 255, 255, 0.07);
+  }
+
+  .glass-card {
+    background: rgba(19, 27, 42, var(--glass-opacity));
+    border: 1px solid rgba(255, 255, 255, 0.07);
+  }
+
+  .glass-sidebar {
+    background: rgba(10, 14, 22, var(--glass-opacity));
+    border-right: 1px solid var(--accent-color, #00d4ff);
+  }
+
+  .cyan-glow {
+    box-shadow: 0 0 20px var(--accent-color, #00d4ff), 0 0 40px var(--accent-color, #00d4ff);
+  }
+
+  .cyan-glow-strong {
+    box-shadow: 0 0 30px var(--accent-color, #00d4ff), 0 0 60px var(--accent-color, #00d4ff);
+  }
+
+  .text-gradient {
+    background: linear-gradient(135deg, var(--accent-color, #00d4ff), #7b9cff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .drag-region {
+    -webkit-app-region: drag;
+  }
+
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes spin-reverse {
+  from { transform: rotate(360deg); }
+  to { transform: rotate(0deg); }
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(0.95); opacity: 0.7; }
+  50% { transform: scale(1.05); opacity: 0.4; }
+  100% { transform: scale(0.95); opacity: 0.7; }
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+@keyframes radar-sweep {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin-slow {
+  animation: spin-slow 8s linear infinite;
+}
+
+.animate-spin-reverse {
+  animation: spin-reverse 5s linear infinite;
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 2s ease-in-out infinite;
+}
+
+.animate-fade-up {
+  animation: fade-in-up 0.4s ease-out forwards;
+}
+
+.animate-radar {
+  animation: radar-sweep 2s linear infinite;
+}
+
+.shimmer {
+  background: linear-gradient(90deg, transparent 0%, rgba(0,212,255,0.1) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite;
+}
