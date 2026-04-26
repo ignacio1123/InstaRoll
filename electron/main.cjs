@@ -58,44 +58,57 @@ app.whenReady().then(() => {
 
   ipcMain.handle('scan-drivers', async () => {
     try {
-      const ps = `
-        $gpus = Get-WmiObject Win32_VideoController | Select-Object Name,DriverVersion,Status;
-        $cpus = Get-WmiObject Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors,MaxClockSpeed,LoadPercentage;
-        $ram = Get-WmiObject Win32_PhysicalMemory | Select-Object Capacity,Speed,Manufacturer;
-        $disks = Get-WmiObject Win32_DiskDrive | Select-Object Model,Size,MediaType;
-        $net = Get-WmiObject Win32_NetworkAdapter | Where-Object { $_.PhysicalAdapter -eq $true } | Select-Object Name,AdapterType,Speed;
-        $audio = Get-WmiObject Win32_SoundDevice | Select-Object Name,Manufacturer;
-        $drivers = @();
-        foreach ($d in $gpus) { $drivers += @{ name = $d.Name; type = 'GPU'; version = $d.DriverVersion; status = 'checking' } }
-        foreach ($d in $cpus) { $drivers += @{ name = $d.Name; type = 'Chipset'; version = ''; status = 'checking' } }
-        foreach ($d in $disks) { $drivers += @{ name = $d.Model; type = 'Disco'; version = ''; status = 'checking' } }
-        foreach ($d in $net) { $drivers += @{ name = $d.Name; type = 'Red'; version = ''; status = 'checking' } }
-        foreach ($d in $audio) { $drivers += @{ name = $d.Name; type = 'Audio'; version = ''; status = 'checking' } }
-        return $drivers | ConvertTo-Json -Compress
-      `;
+      const fs = require('fs');
+      const os = require('os');
+      const path = require('path');
       const { exec } = require('child_process');
+      const scriptLines = [
+        "$ErrorActionPreference = 'SilentlyContinue'",
+        "$gpus = Get-WmiObject Win32_VideoController | Select-Object Name,DriverVersion",
+        "$cpus = Get-WmiObject Win32_Processor | Select-Object Name",
+        "$disks = Get-WmiObject Win32_DiskDrive | Select-Object Model",
+        "$net = Get-WmiObject Win32_NetworkAdapter | Where-Object { $_.PhysicalAdapter -eq $true } | Select-Object Name",
+        "$audio = Get-WmiObject Win32_SoundDevice | Select-Object Name",
+        "$drivers = @()",
+        "foreach ($d in $gpus) { $drivers += @{ name = $d.Name; type = 'GPU'; version = $d.DriverVersion; status = 'up-to-date'; source = 'system' } }",
+        "foreach ($d in $cpus) { $drivers += @{ name = $d.Name; type = 'Chipset'; version = ''; status = 'up-to-date'; source = 'system' } }",
+        "foreach ($d in $disks) { $drivers += @{ name = $d.Model; type = 'Disco'; version = ''; status = 'up-to-date'; source = 'system' } }",
+        "foreach ($d in $net) { $drivers += @{ name = $d.Name; type = 'Red'; version = ''; status = 'up-to-date'; source = 'system' } }",
+        "foreach ($d in $audio) { $drivers += @{ name = $d.Name; type = 'Audio'; version = ''; status = 'up-to-date'; source = 'system' } }",
+        "try {",
+        "  $Session = New-Object -ComObject Microsoft.Update.Session",
+        "  $Searcher = $Session.CreateUpdateSearcher()",
+        "  $SearchResult = $Searcher.Search(\"IsInstalled=0 and Type='Driver'\")",
+        "  foreach ($update in $SearchResult.Updates) {",
+        "    $drivers += @{ name = $update.Title; type = 'Update Oficial'; version = ''; status = 'update-available'; source = 'wua'; id = $update.Title }",
+        "  }",
+        "} catch {}",
+        "$gpuStr = ($gpus.Name -join ' ').ToLower()",
+        "if ($gpuStr -match 'nvidia') { $drivers += @{ name = 'NVIDIA GeForce Experience'; type = 'Software GPU'; version = ''; status = 'update-available'; source = 'winget'; id = 'Nvidia.GeForceExperience' } }",
+        "if ($gpuStr -match 'amd' -or $gpuStr -match 'radeon') { $drivers += @{ name = 'AMD Radeon Software'; type = 'Software GPU'; version = ''; status = 'update-available'; source = 'winget'; id = 'AMD.RadeonSoftware' } }",
+        "if ($gpuStr -match 'intel') { $drivers += @{ name = 'Intel Driver & Support Assistant'; type = 'Software GPU'; version = ''; status = 'update-available'; source = 'winget'; id = 'Intel.DriverAndSupportAssistant' } }",
+        "$drivers | ConvertTo-Json -Compress"
+      ];
+      const scriptContent = scriptLines.join('\r\n');
+      const tmpScript = path.join(os.tmpdir(), `instaroll_scan_${Date.now()}.ps1`);
+      fs.writeFileSync(tmpScript, scriptContent, 'utf8');
       return new Promise((resolve) => {
-        exec(`powershell -Command "${ps}"`, async (err, stdout) => {
-          if (err) return resolve({ success: false, error: err.message });
+        exec(`powershell -ExecutionPolicy Bypass -File "${tmpScript}"`, { maxBuffer: 1024 * 1024 * 10 }, (err, stdout, stderr) => {
+          try { fs.unlinkSync(tmpScript); } catch {}
+          
+          fs.writeFileSync(path.join(require('os').homedir(), 'Desktop', 'debug_scan.txt'), `ERR: ${err ? err.message : 'null'}\nSTDERR: ${stderr}\nSTDOUT: ${stdout}`);
+          
+          if (err) return resolve({ success: false, error: err.message, debug: stdout });
+          
           let drivers = [];
-          try { drivers = JSON.parse(stdout); } catch {}
+          try { 
+            drivers = JSON.parse(stdout.trim()); 
+          } catch (parseErr) {
+            return resolve({ success: false, error: 'Parse Error: ' + parseErr.message, debug: stdout });
+          }
+          
           if (!Array.isArray(drivers) && typeof drivers === 'object') {
             drivers = Object.values(drivers).flat();
-          }
-          // Verifica online TODOS los drivers para actualizaciones
-          for (let d of drivers) {
-            const versionOnline = await buscarDriverOnlineSeguro(d.name, d.type);
-            if (!d.version && versionOnline) {
-              d.status = 'update-available';
-              d.version = versionOnline;
-            } else if (versionOnline && versionOnline !== d.version) {
-              d.status = 'update-available';
-              d.versionOnline = versionOnline;
-            } else if (d.version) {
-              d.status = 'up-to-date';
-            } else {
-              d.status = 'missing';
-            }
           }
           resolve({ success: true, data: drivers });
         });
@@ -105,59 +118,89 @@ app.whenReady().then(() => {
     }
   });
 
-  // Handler para get-system-info
-  ipcMain.handle('get-system-info', async () => {
+  ipcMain.handle('update-driver', async (_, driverData) => {
+    try {
+      if (driverData.source === 'winget') {
+        const proc = spawn('winget', ['install', '--id', driverData.id, '--silent', '--accept-source-agreements', '--accept-package-agreements'], { shell: true })
+        return new Promise((resolve) => {
+          proc.on('close', (code) => resolve({ success: code === 0 }))
+        })
+      } else if (driverData.source === 'wua') {
+        const fs = require('fs');
+        const os = require('os');
+        const path = require('path');
+        const { exec } = require('child_process');
+        const scriptLines = [
+          "$ErrorActionPreference = 'SilentlyContinue'",
+          `$Title = '${driverData.id.replace(/'/g, "''")}'`,
+          "$Session = New-Object -ComObject Microsoft.Update.Session",
+          "$Searcher = $Session.CreateUpdateSearcher()",
+          "$SearchResult = $Searcher.Search(\"IsInstalled=0 and Type='Driver' and Title='$Title'\")",
+          "if ($SearchResult.Updates.Count -gt 0) {",
+          "  $Downloader = $Session.CreateUpdateDownloader()",
+          "  $Downloader.Updates = $SearchResult.Updates",
+          "  $Downloader.Download()",
+          "  $Installer = $Session.CreateUpdateInstaller()",
+          "  $Installer.Updates = $SearchResult.Updates",
+          "  $Installer.Install()",
+          "}"
+        ];
+        const scriptContent = scriptLines.join('\r\n');
+        const tmpScript = path.join(os.tmpdir(), `instaroll_upd_${Date.now()}.ps1`);
+        fs.writeFileSync(tmpScript, scriptContent, 'utf8');
+        return new Promise((resolve) => {
+          exec(`powershell -ExecutionPolicy Bypass -File "${tmpScript}"`, (err, stdout) => {
+            try { fs.unlinkSync(tmpScript); } catch {}
+            if (err) return resolve({ success: false, error: err.message });
+            resolve({ success: true });
+          });
+        });
+      }
+      return { success: false, error: 'Unknown source' };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('update-all-drivers', async (_, driversList) => {
     try {
       const fs = require('fs');
       const os = require('os');
       const path = require('path');
       const { exec } = require('child_process');
       const scriptLines = [
-        '$cpu = Get-WmiObject Win32_Processor | Select-Object -First 1 Name,MaxClockSpeed,NumberOfCores,NumberOfLogicalProcessors,LoadPercentage',
-        '$ram = Get-WmiObject Win32_OperatingSystem | Select-Object -First 1 TotalVisibleMemorySize,FreePhysicalMemory',
-        '$gpu = Get-WmiObject Win32_VideoController | Select-Object -First 1 Name,DriverVersion,AdapterRAM',
-        '$os = Get-WmiObject Win32_OperatingSystem | Select-Object -First 1 Caption,Version,BuildNumber,OSArchitecture',
-        '$mb = Get-WmiObject Win32_BaseBoard | Select-Object -First 1 Manufacturer,Product',
-        '$disks = Get-WmiObject Win32_DiskDrive | Select-Object Model,Size,MediaType',
-        '$info = @{ CPU = $cpu; RAM = $ram; GPU = $gpu; OS = $os; Motherboard = $mb; Disks = $disks }',
-        '$info | ConvertTo-Json -Compress'
+        "$ErrorActionPreference = 'SilentlyContinue'",
+        "$Session = New-Object -ComObject Microsoft.Update.Session",
+        "$Searcher = $Session.CreateUpdateSearcher()",
+        "$SearchResult = $Searcher.Search(\"IsInstalled=0 and Type='Driver'\")",
+        "if ($SearchResult.Updates.Count -gt 0) {",
+        "  $Downloader = $Session.CreateUpdateDownloader()",
+        "  $Downloader.Updates = $SearchResult.Updates",
+        "  $Downloader.Download()",
+        "  $Installer = $Session.CreateUpdateInstaller()",
+        "  $Installer.Updates = $SearchResult.Updates",
+        "  $Installer.Install()",
+        "}"
       ];
+      const wingetIds = driversList.filter(d => d.source === 'winget').map(d => d.id);
+      for (const id of wingetIds) {
+        scriptLines.push(`winget install --id "${id}" --silent --accept-source-agreements --accept-package-agreements`);
+      }
+      
       const scriptContent = scriptLines.join('\r\n');
-      const tmpScript = path.join(os.tmpdir(), `instaroll_sysinfo_${Date.now()}.ps1`);
+      const tmpScript = path.join(os.tmpdir(), `instaroll_updall_${Date.now()}.ps1`);
       fs.writeFileSync(tmpScript, scriptContent, 'utf8');
       return new Promise((resolve) => {
-        exec(`powershell -ExecutionPolicy Bypass -File "${tmpScript}"`, (err, stdout) => {
-          fs.unlinkSync(tmpScript);
+        exec(`powershell -ExecutionPolicy Bypass -File "${tmpScript}"`, { maxBuffer: 1024 * 1024 * 10 }, (err) => {
+          try { fs.unlinkSync(tmpScript); } catch {}
           if (err) return resolve({ success: false, error: err.message });
-          let info = {};
-          try { info = JSON.parse(stdout); } catch {}
-          resolve({ success: true, data: info });
+          resolve({ success: true });
         });
       });
     } catch (err) {
       return { success: false, error: err.message };
     }
   });
-
-  // Simulación de búsqueda online segura de drivers
-  async function buscarDriverOnlineSeguro(nombre, tipo) {
-    // Intenta buscar el driver usando winget
-    const { execSync } = require('child_process');
-    try {
-      // Busca el paquete en winget
-      const search = execSync(`winget search "${nombre}" --source msstore --accept-source-agreements`, { encoding: 'utf8' });
-      // Si encuentra resultados, retorna una versión simulada
-      if (search && search.includes(nombre)) {
-        // Aquí podrías parsear la versión real si está disponible
-        return 'Encontrado';
-      }
-    } catch (e) {
-      // Si no encuentra, retorna vacío
-      return '';
-    }
-    // Si no encuentra, retorna vacío
-    return '';
-  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

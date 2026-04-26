@@ -1,9 +1,25 @@
+export interface DriverData {
+  id: string
+  source: string
+}
+
+export interface ScannedDriver {
+  name: string
+  type: string
+  version?: string
+  status: 'up-to-date' | 'update-available' | 'unknown' | 'checking' | 'missing'
+  source: string
+  id: string
+}
+
 export interface ElectronAPI {
   minimize: () => Promise<void>
   maximize: () => Promise<void>
   close: () => Promise<void>
   wingetInstall: (packageId: string) => Promise<{ success: boolean; output?: string }>
-  scanDrivers: () => Promise<{ success: boolean; data?: string; error?: string }>
+  scanDrivers: () => Promise<{ success: boolean; data?: ScannedDriver[]; error?: string }>
+  updateDriver: (driverData: DriverData) => Promise<{ success: boolean; error?: string }>
+  updateAllDrivers: (driversList: DriverData[]) => Promise<{ success: boolean; error?: string }>
   getSystemInfo: () => Promise<{ success: boolean; data?: RawSystemInfo; error?: string }>
   getPerfMetrics: () => Promise<{ success: boolean; data?: PerfMetrics; error?: string }>
   openTool: (tool: string) => Promise<{ success: boolean }>

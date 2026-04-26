@@ -1,21 +1,17 @@
-// Función para extraer y resumir cambios del output del driver
-function resumenCambiosDriver(output: string): string {
-  if (!output) return '';
-  // Busca líneas relevantes (simulación)
-  const lines = output.split('\n').filter(l => l.toLowerCase().includes('update') || l.toLowerCase().includes('fix') || l.toLowerCase().includes('improve'));
-  if (lines.length === 0) return 'Actualización aplicada correctamente.';
-  return lines.slice(0, 2).join(' · '); // Máximo 2 cambios resumidos
-}
+
 import { useState } from 'react'
-import { Monitor, Wifi, HardDrive, Cpu, RefreshCw, CheckCircle, AlertCircle, Loader, Volume2, Zap } from 'lucide-react'
+import { Monitor, Wifi, HardDrive, Cpu, RefreshCw, CheckCircle, AlertCircle, Loader, Volume2, Zap, Download } from 'lucide-react'
 import { useLang } from '../context/LanguageContext'
 
 interface DriverItem {
   name: string
   type: string
   icon: typeof Monitor
-  status: 'up-to-date' | 'update-available' | 'unknown' | 'checking'
+  status: 'up-to-date' | 'update-available' | 'unknown' | 'checking' | 'missing'
   version?: string
+  source?: string
+  id?: string
+  changes?: string
 }
 
 const ICONS: Record<string, typeof Monitor> = {
@@ -25,6 +21,8 @@ const ICONS: Record<string, typeof Monitor> = {
   Disco: HardDrive,
   WiFi: Wifi,
   Audio: Volume2,
+  'Actualización de Hardware': Cpu,
+  'Software GPU': Monitor
 }
 
 function RadarAnimation({ scanning }: { scanning: boolean }) {
@@ -63,6 +61,7 @@ function RadarAnimation({ scanning }: { scanning: boolean }) {
 export default function DriverScanner() {
   const { t } = useLang()
   const [scanning, setScanning] = useState(false)
+  const [updatingAll, setUpdatingAll] = useState(false)
   const [scanned, setScanned] = useState(false)
   const [drivers, setDrivers] = useState<DriverItem[]>([])
   const [progress, setProgress] = useState(0)
@@ -73,18 +72,25 @@ export default function DriverScanner() {
     setScanned(false)
     setProgress(0)
     setDrivers([])
-    // Llama a Electron para escaneo profundo
     const api = window.electronAPI
     try {
+      // Simular progreso mientras el backend trabaja (ya que WUA puede tardar)
+      const interval = setInterval(() => {
+        setProgress(p => (p < 90 ? p + 5 : p))
+      }, 1000)
+      
       const result = await api?.scanDrivers()
+      clearInterval(interval)
+      
       if (result?.success && result.data) {
-        // result.data debe ser un array de drivers reales
-        const foundDrivers = result.data.map((d: any) => ({
+        const foundDrivers = result.data.map((d) => ({
           name: d.name,
           type: d.type,
           icon: ICONS[d.type] || Monitor,
           status: d.status,
           version: d.version,
+          source: d.source,
+          id: d.id,
         }))
         setDrivers(foundDrivers)
         setProgress(100)
@@ -100,6 +106,26 @@ export default function DriverScanner() {
     setScanned(true)
   }
 
+  const updateAll = async () => {
+    const toUpdate = drivers.filter(d => d.status === 'update-available')
+    if (toUpdate.length === 0 || updatingAll) return
+    
+    setUpdatingAll(true)
+    setDrivers(prev => prev.map(d => d.status === 'update-available' ? { ...d, status: 'checking' } : d))
+    
+    const api = window.electronAPI
+    const res = await api?.updateAllDrivers(toUpdate.map(d => ({ id: d.id || '', source: d.source || '' })))
+    
+    setDrivers(prev => prev.map(d => {
+      const isTarget = toUpdate.some(u => u.id === d.id)
+      if (isTarget) {
+        return { ...d, status: res?.success ? 'up-to-date' : 'update-available', changes: res?.success ? 'Instalación completada con éxito.' : 'Fallo en la instalación.' }
+      }
+      return d
+    }))
+    setUpdatingAll(false)
+  }
+
   const updatesAvailable = drivers.filter(d => d.status === 'update-available').length
 
   return (
@@ -109,12 +135,27 @@ export default function DriverScanner() {
           <h1 className="text-xl font-bold text-white">{t.drivers.title}</h1>
           <p className="text-xs text-slate-500 mt-0.5">{t.drivers.subtitle}</p>
         </div>
-        {scanned && updatesAvailable > 0 && (
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-400/10 border border-amber-400/20">
-            <AlertCircle size={13} className="text-amber-400" />
-            <span className="text-xs text-amber-400 font-medium">{updatesAvailable} {t.drivers.updatesAvailable}</span>
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          {scanned && updatesAvailable > 0 && (
+            <button
+              onClick={updateAll}
+              disabled={updatingAll}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all duration-300 ${
+                updatingAll ? 'bg-amber-400/20 text-amber-400/50 cursor-not-allowed border border-amber-400/20' :
+                'bg-amber-400/20 text-amber-400 hover:bg-amber-400/30 border border-amber-400/40 hover:border-amber-400/60 shadow-[0_0_15px_rgba(251,191,36,0.15)] hover:shadow-[0_0_20px_rgba(251,191,36,0.3)]'
+              }`}
+            >
+              {updatingAll ? <Loader size={16} className="animate-spin" /> : <Download size={16} />}
+              Actualizar Todos ({updatesAvailable})
+            </button>
+          )}
+          {scanned && updatesAvailable > 0 && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-400/10 border border-amber-400/20">
+              <AlertCircle size={13} className="text-amber-400" />
+              <span className="text-xs text-amber-400 font-medium">{updatesAvailable} {t.drivers.updatesAvailable}</span>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="flex gap-6 flex-1 min-h-0">
@@ -133,9 +174,9 @@ export default function DriverScanner() {
           )}
           <button
             onClick={startScan}
-            disabled={scanning}
+            disabled={scanning || updatingAll}
             className={`w-full py-2.5 rounded-xl text-sm font-medium transition-all duration-200 flex items-center justify-center gap-2 ${
-              scanning ? 'bg-cyan-400/10 text-cyan-400/50 border border-cyan-400/20 cursor-not-allowed' :
+              scanning || updatingAll ? 'bg-cyan-400/10 text-cyan-400/50 border border-cyan-400/20 cursor-not-allowed' :
               'bg-cyan-400/20 text-cyan-400 border border-cyan-400/30 hover:bg-cyan-400/30 hover:cyan-glow'
             }`}
           >
@@ -159,7 +200,7 @@ export default function DriverScanner() {
           )}
         </div>
 
-        <div className="flex-1 flex flex-col gap-3 overflow-y-auto min-h-0">
+        <div className="flex-1 flex flex-col gap-3 overflow-y-auto min-h-0 pr-2">
           {drivers.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center gap-3 text-slate-600">
               <div className="w-16 h-16 rounded-2xl border-2 border-dashed border-slate-700 flex items-center justify-center">
@@ -181,7 +222,7 @@ export default function DriverScanner() {
               return (
                 <div key={i} className="glass-card rounded-2xl p-4 flex items-center gap-4 hover:border-white/15 transition-all duration-300">
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-                    hasUpdate ? 'bg-amber-400/10 border border-amber-400/20' :
+                    hasUpdate ? 'bg-amber-400/10 border border-amber-400/20 shadow-[0_0_10px_rgba(251,191,36,0.1)]' :
                     isUpToDate ? 'bg-emerald-400/10 border border-emerald-400/20' :
                     isMissing ? 'bg-red-400/10 border border-red-400/20' :
                     'bg-slate-700/50 border border-slate-600/30'
@@ -189,9 +230,14 @@ export default function DriverScanner() {
                     <Icon size={18} className={hasUpdate ? 'text-amber-400' : isUpToDate ? 'text-emerald-400' : isMissing ? 'text-red-400' : 'text-slate-500'} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-white truncate">{driver.name}</div>
+                    <div className="text-sm font-medium text-white truncate" title={driver.name}>{driver.name}</div>
                     <div className="flex items-center gap-2 mt-0.5">
                       <span className="text-xs text-slate-500">{driver.type}</span>
+                      {driver.source && (
+                        <span className="text-[10px] text-cyan-400/70 border border-cyan-400/20 bg-cyan-400/5 px-1.5 py-0.5 rounded uppercase tracking-wide">
+                          {driver.source}
+                        </span>
+                      )}
                       {driver.version && !isChecking && (
                         <span className="text-[10px] text-slate-600 bg-slate-800/60 px-1.5 py-0.5 rounded">v{driver.version}</span>
                       )}
@@ -199,41 +245,28 @@ export default function DriverScanner() {
                   </div>
                   <div className="shrink-0">
                     {isChecking ? (
-                      <div className="flex items-center gap-1.5 text-xs text-slate-500"><Loader size={12} className="animate-spin" />{t.drivers.checking}</div>
+                      <div className="flex items-center gap-1.5 text-xs text-amber-400"><Loader size={14} className="animate-spin" />Instalando...</div>
                     ) : hasUpdate ? (
                       <button
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-400/20 text-amber-400 border border-amber-400/30 text-xs font-medium hover:bg-amber-400/30 transition-colors"
                         onClick={async () => {
                           const api = window.electronAPI
                           setDrivers(prev => prev.map((d, idx) => idx === i ? { ...d, status: 'checking' } : d))
-                          const res = await api?.wingetInstall(driver.name)
-                          setDrivers(prev => prev.map((d, idx) => idx === i ? { ...d, status: res?.success ? 'up-to-date' : 'update-available', changes: res?.output ? resumenCambiosDriver(res.output) : '' } : d))
+                          const res = await api?.updateDriver({ id: driver.id || '', source: driver.source || '' })
+                          setDrivers(prev => prev.map((d, idx) => idx === i ? { ...d, status: res?.success ? 'up-to-date' : 'update-available', changes: res?.success ? 'Instalación completada' : 'Fallo en la instalación' } : d))
                         }}
                       >
                         {t.drivers.update}
                       </button>
                     ) : isUpToDate ? (
-                      <div className="flex flex-col gap-1">
+                      <div className="flex flex-col gap-1 items-end">
                         <div className="flex items-center gap-1.5 text-xs text-emerald-400"><CheckCircle size={13} />{t.drivers.upToDate}</div>
                         {driver.changes && (
-                          <div className="text-[10px] text-slate-400 bg-slate-800/60 px-2 py-1 rounded mt-1">
-                            <b>Cambios:</b> {driver.changes}
+                          <div className="text-[10px] text-emerald-400/70 bg-emerald-400/10 px-2 py-1 rounded mt-1">
+                            {driver.changes}
                           </div>
                         )}
                       </div>
-                    ) : isMissing ? (
-                      <button
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-400/20 text-red-400 border border-red-400/30 text-xs font-medium hover:bg-red-400/30 transition-colors"
-                        onClick={async () => {
-                          const api = window.electronAPI
-                          setDrivers(prev => prev.map((d, idx) => idx === i ? { ...d, status: 'checking' } : d))
-                          // Simula búsqueda e instalación segura
-                          const res = await api?.wingetInstall(driver.name)
-                          setDrivers(prev => prev.map((d, idx) => idx === i ? { ...d, status: res?.success ? 'up-to-date' : 'missing' } : d))
-                        }}
-                      >
-                        Buscar e instalar
-                      </button>
                     ) : (
                       <div className="flex items-center gap-1.5 text-xs text-slate-500"><AlertCircle size={13} />{t.drivers.unknown}</div>
                     )}
