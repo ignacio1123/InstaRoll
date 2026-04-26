@@ -202,6 +202,124 @@ app.whenReady().then(() => {
     }
   });
 
+  ipcMain.handle('antivirus-scan', async (_, scanType) => {
+    try {
+      const fs = require('fs');
+      const os = require('os');
+      const path = require('path');
+      const { exec } = require('child_process');
+      const scriptLines = [
+        "$ErrorActionPreference = 'SilentlyContinue'",
+        "$threats = @()",
+        
+        // Motor 1: InstaRoll Heuristics (Apps no firmadas en Startup)
+        "$startupKeys = @('HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run', 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run')",
+        "foreach ($key in $startupKeys) {",
+        "  if (Test-Path $key) {",
+        "    $entries = Get-ItemProperty -Path $key",
+        "    $properties = $entries.psobject.properties | Where-Object { $_.Name -notmatch '^PS' }",
+        "    foreach ($prop in $properties) {",
+        "      $val = $prop.Value",
+        "      if ($val -match '\"([^\"]+)\"') { $exePath = $matches[1] } else { $exePath = ($val -split ' ')[0] }",
+        "      if (Test-Path $exePath) {",
+        "        $sig = Get-AuthenticodeSignature $exePath",
+        "        if ($sig.Status -ne 'Valid') {",
+        "          $threats += @{",
+        "            id = [guid]::NewGuid().ToString()",
+        "            name = \"Suspicious.Unsigned.$($prop.Name)\"",
+        "            type = 'InstaRoll Heuristics'",
+        "            severity = 3",
+        "            resources = @($exePath)",
+        "            description = 'Aplicación de inicio no firmada detectada. Posible troyano o spyware oculto en el arranque del sistema.'",
+        "            source = 'instaroll'",
+        "          }",
+        "        }",
+        "      }",
+        "    }",
+        "  }",
+        "}",
+        
+        // Motor 2: Windows Defender
+        `Start-MpScan -ScanType ${scanType === 'Full' ? 'FullScan' : 'QuickScan'} | Out-Null`,
+        "$defenderThreats = Get-MpThreatDetection",
+        "if ($defenderThreats) {",
+        "  foreach ($t in $defenderThreats) {",
+        "    $resources = @()",
+        "    if ($t.Resources) { $resources = $t.Resources }",
+        "    $threats += @{",
+        "      id = $t.ThreatID.ToString()",
+        "      name = $t.ThreatName",
+        "      type = 'Windows Defender'",
+        "      severity = $t.SeverityID",
+        "      resources = $resources",
+        "      description = 'Amenaza detectada por Microsoft Defender. Su comportamiento coincide con la base de datos de malware.'",
+        "      source = 'defender'",
+        "    }",
+        "  }",
+        "}",
+        "$threats | ConvertTo-Json -Compress"
+      ];
+      
+      const scriptContent = scriptLines.join('\\r\\n');
+      const tmpScript = path.join(os.tmpdir(), `instaroll_av_${Date.now()}.ps1`);
+      fs.writeFileSync(tmpScript, scriptContent, 'utf8');
+      
+      return new Promise((resolve) => {
+        exec(`powershell -ExecutionPolicy Bypass -File "${tmpScript}"`, { maxBuffer: 1024 * 1024 * 15 }, (err, stdout) => {
+          try { fs.unlinkSync(tmpScript); } catch {}
+          if (err) return resolve({ success: false, error: err.message, debug: stdout });
+          
+          let parsed = [];
+          if (stdout.trim()) {
+            try { parsed = JSON.parse(stdout.trim()); } catch (e) {
+              return resolve({ success: false, error: 'Parse Error', debug: stdout });
+            }
+          }
+          if (!Array.isArray(parsed) && typeof parsed === 'object') {
+            parsed = Object.values(parsed).flat();
+          }
+          resolve({ success: true, data: parsed });
+        });
+      });
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('antivirus-remove', async (_, threat) => {
+    try {
+      const fs = require('fs');
+      const os = require('os');
+      const path = require('path');
+      const { exec } = require('child_process');
+      const scriptLines = [
+        "$ErrorActionPreference = 'SilentlyContinue'",
+      ];
+      if (threat.source === 'defender') {
+        scriptLines.push(`Remove-MpThreat -ThreatID ${threat.id} | Out-Null`);
+      } else if (threat.source === 'instaroll') {
+        scriptLines.push(`$paths = @(${threat.resources.map(r => `'${r.replace(/'/g, "''")}'`).join(',')})`);
+        scriptLines.push("foreach ($p in $paths) { if (Test-Path $p) { Remove-Item -Path $p -Force -Recurse } }");
+        scriptLines.push(`$name = '${threat.name.split('.').pop().replace(/'/g, "''")}'`);
+        scriptLines.push("Remove-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Name $name -ErrorAction SilentlyContinue");
+        scriptLines.push("Remove-ItemProperty -Path 'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Name $name -ErrorAction SilentlyContinue");
+      }
+      
+      const scriptContent = scriptLines.join('\\r\\n');
+      const tmpScript = path.join(os.tmpdir(), `instaroll_rm_${Date.now()}.ps1`);
+      fs.writeFileSync(tmpScript, scriptContent, 'utf8');
+      
+      return new Promise((resolve) => {
+        exec(`powershell -ExecutionPolicy Bypass -File "${tmpScript}"`, (err) => {
+          try { fs.unlinkSync(tmpScript); } catch {}
+          resolve({ success: !err, error: err?.message });
+        });
+      });
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

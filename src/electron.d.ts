@@ -12,6 +12,16 @@ export interface ScannedDriver {
   id: string
 }
 
+export interface Threat {
+  id: string
+  name: string
+  type: string
+  severity: number
+  resources: string[]
+  description: string
+  source: string
+}
+
 export interface ElectronAPI {
   minimize: () => Promise<void>
   maximize: () => Promise<void>
@@ -20,6 +30,8 @@ export interface ElectronAPI {
   scanDrivers: () => Promise<{ success: boolean; data?: ScannedDriver[]; error?: string }>
   updateDriver: (driverData: DriverData) => Promise<{ success: boolean; error?: string }>
   updateAllDrivers: (driversList: DriverData[]) => Promise<{ success: boolean; error?: string }>
+  antivirusScan: (type: 'Quick' | 'Full') => Promise<{ success: boolean; data?: Threat[]; error?: string; debug?: string }>
+  antivirusRemove: (threat: Threat) => Promise<{ success: boolean; error?: string }>
   getSystemInfo: () => Promise<{ success: boolean; data?: RawSystemInfo; error?: string }>
   getPerfMetrics: () => Promise<{ success: boolean; data?: PerfMetrics; error?: string }>
   openTool: (tool: string) => Promise<{ success: boolean }>
